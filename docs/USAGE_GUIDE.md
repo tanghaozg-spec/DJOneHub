@@ -68,6 +68,15 @@ scripts/build-dmg-universal.sh v1.2.10
 
 移动端通过模块的 CDC ECM 网络访问 `http://192.168.225.1:7575/`。如设备未获得 DHCP 地址，可临时设为 `192.168.225.2/24`；不要手动设置路由器或 DNS，以免覆盖 Wi-Fi 的默认互联网出口。
 
+### 上网方式切换（Agent 0.3.22 或更高）
+
+模块照常插在手机 USB 口上时，可在 App“设置 → 网络 → 上网方式”中二选一：
+
+- **模块 4G 上网**（默认）：模块通过 DHCP 向手机下发默认网关（选项 3），手机使用模块的 4G 流量上网。
+- **Wi-Fi 上网**：不下发默认网关，手机上网继续走 Wi-Fi；模块只承载通话、短信、GPS 与控制面。
+
+两种方式下，通话与短信都通过 `192.168.225.0/24` USB 私网与 Agent 通信，与手机走哪个上网出口完全无关。切换由 `POST /api/network/internet-mode` 完成，选择持久化在模块的 `/data/djonehub/dhcp-internet-mode`，模块重启后仍生效；切换过程中模块网络会短暂中断，通话进行时 Agent 会拒绝切换。若切换后手机仍走旧出口，重新插拔一次 USB 让手机重新获取 DHCP 租约即可。
+
 Windows 电脑为未部署模块进行首次刷写时，请不要套用本节的移动端更新流程。优先参阅 [Windows 刷机工具使用教程](WINDOWS_FLASHER_APP.md)；第三方 WebUSB 方案见 [Windows 电脑刷机页面](WINDOWS_WEB_FLASHER.md)。
 
 ## 5. 模块状态与更新

@@ -137,6 +137,11 @@ struct DJOneHubAPI: Sendable {
     func setCellularPolicy(forceOff: Bool) async throws -> CellularPolicyStatus {
         try await postDecoded("api/network/cellular-policy", ["force_off": forceOff])
     }
+    /// 读取上网方式（wifi：手机上网走 Wi-Fi；module：手机使用模块 4G）。
+    func internetMode() async throws -> InternetModeStatus { try await get("api/network/internet-mode") }
+    func setInternetMode(_ mode: String) async throws -> InternetModeStatus {
+        try await postDecoded("api/network/internet-mode", ["mode": mode], timeout: 10)
+    }
     func check4GRoute() async throws -> NetworkCheckResult { try await postDecoded("api/network/check-4g", EmptyBody()) }
     func checkProxyRoute() async throws -> NetworkCheckResult { try await postDecoded("api/network/check-proxy", EmptyBody()) }
     func rebootModule() async throws { try await post("api/network/reboot-module", EmptyBody()) }

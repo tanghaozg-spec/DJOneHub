@@ -34,6 +34,10 @@ struct SettingsView: View {
     @State private var isUpdatingCellularPolicy = false
     /// 每次用户修改策略都递增，用于丢弃修改前已发出的旧查询结果。
     @State private var cellularPolicyRevision = 0
+    /// 上网方式：wifi（手机上网走 Wi-Fi）或 module（手机使用模块 4G）；nil 表示模块尚不支持。
+    @State private var internetMode: String?
+    @State private var isUpdatingInternetMode = false
+    @State private var internetModeRevision = 0
     @State private var gps: GPSStatus?
     @State private var gpsMessage = ""
     @State private var esim: ESIMOverview?
@@ -321,6 +325,8 @@ struct SettingsView: View {
 
     private var networkCard: some View {
         VStack(spacing: 12) {
+            internetModeCard
+            Divider()
             Toggle(L10n.t("允许 4G 上网"), isOn: cellularAllowedBinding)
                 .disabled(isUpdatingCellularPolicy)
             Text("关闭后禁止\(DeviceContext.displayName)通过模块访问互联网；短信与来电监控不受影响。")
@@ -333,6 +339,36 @@ struct SettingsView: View {
                 (L10n.t("网络诊断"), "stethoscope", showNetworkDiagnostic),
                 (L10n.t("重启模块"), "restart", rebootModule),
             ])
+        }
+    }
+
+    /// 上网方式开关：无论选择哪种方式，通话与短信始终通过 USB 私网，不受影响。
+    @ViewBuilder
+    private var internetModeCard: some View {
+        if internetMode != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.t("上网方式")).font(.subheadline.weight(.semibold))
+                Picker(L10n.t("上网方式"), selection: internetModeBinding) {
+                    Text(L10n.t("Wi-Fi 上网")).tag("wifi")
+                    Text(L10n.t("模块 4G 上网")).tag("module")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(isUpdatingInternetMode || !model.isOnline)
+                Text("模块 4G 上网：手机使用模块的 4G 流量上网。\nWi-Fi 上网：手机上网继续走 Wi-Fi，模块只负责通话、短信与控制。\n切换时模块网络会短暂中断；通话与短信不受影响。若切换后手机仍走旧出口，重新插拔一次 USB 即可生效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.t("上网方式")).font(.subheadline.weight(.semibold))
+                Text("当前模块版本尚未支持上网方式切换；将模块更新到 0.3.22 或更高版本后可用。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -565,6 +601,8 @@ struct SettingsView: View {
     private func refreshAll() async {
         // 轮询开始时记录版本；请求返回时若用户已修改策略，则该回包已过期。
         let policyRevisionAtRequest = cellularPolicyRevision
+        let internetModeRevisionAtRequest = internetModeRevision
+        let wasUpdatingInternetMode = isUpdatingInternetMode
         async let modemRequest = try? model.api.modemStatus()
         async let trafficRequest = try? model.api.networkTraffic()
         async let powerRequest = try? model.api.systemPower()
@@ -575,6 +613,7 @@ struct SettingsView: View {
         async let voiceRequest = try? model.api.voiceRuntimeStatus()
         async let setupRequest = try? model.api.moduleSetupStatus()
         async let usbProfileRequest = try? model.api.usbProfile()
+        async let internetModeRequest = try? model.api.internetMode()
 
         modem = await modemRequest
         if let current = await trafficRequest {
@@ -593,6 +632,12 @@ struct SettingsView: View {
         voice = await voiceRequest
         setup = await setupRequest
         usbProfile = await usbProfileRequest
+        if let modeStatus = await internetModeRequest,
+           !modeStatus.mode.isEmpty,
+           internetModeRevisionAtRequest == internetModeRevision,
+           !wasUpdatingInternetMode {
+            internetMode = modeStatus.mode
+        }
     }
 
     private func updateRates(with current: NetworkTrafficSnapshot) {
@@ -619,6 +664,49 @@ struct SettingsView: View {
                 updateCellularPolicy(allowed: requestedAllowed)
             }
         )
+    }
+
+    private var internetModeBinding: Binding<String> {
+        Binding(
+            get: { internetMode ?? "module" },
+            set: { requestedMode in
+                guard requestedMode != internetMode, !isUpdatingInternetMode else { return }
+                updateInternetMode(requestedMode)
+            }
+        )
+    }
+
+    /// 先立即更新界面，再等待模块确认；切换期间模块网络会短暂中断（Agent 会抖动 ecm0 触发手机重新租约）。
+    private func updateInternetMode(_ mode: String) {
+        guard model.activeCall == nil else {
+            actionMessage = "通话进行中不能切换上网方式，请先挂断"
+            return
+        }
+        let previousMode = internetMode ?? "module"
+        internetMode = mode
+        internetModeRevision &+= 1
+        let requestRevision = internetModeRevision
+        isUpdatingInternetMode = true
+
+        Task {
+            defer {
+                if requestRevision == internetModeRevision {
+                    isUpdatingInternetMode = false
+                }
+            }
+
+            do {
+                let result = try await model.api.setInternetMode(mode)
+                guard requestRevision == internetModeRevision else { return }
+                // 以模块回包为准，避免本地显示与实际模式不一致。
+                internetMode = result.mode
+                actionMessage = result.message ?? "已切换上网方式"
+            } catch {
+                guard requestRevision == internetModeRevision else { return }
+                internetMode = previousMode
+                actionMessage = "切换上网方式失败：\(error.localizedDescription)"
+            }
+        }
     }
 
     /// 先立即更新界面，再等待模块确认；失败时恢复原值，避免开关“点了又弹回”的假象。

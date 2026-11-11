@@ -338,9 +338,11 @@ wait_factory_service() {
     return 1
 }
 
-# 原厂 DHCP 服务没有下发 Router（选项 3），iPhone 会因此放弃 USB ECM 的 IPv4 租约。
-# 这是 0.3.36 的可回滚验证钩子：只替换完全匹配的原厂命令，未知配置一律不动。
-ensure_mobile_dhcp_router() {
+# 上网方式切换：/data/djonehub/dhcp-internet-mode 保存用户在 App 中选择的方式。
+# wifi = 原厂参数（不下发 DHCP Router 选项 3），手机上网继续走 Wi-Fi，模块只承载通话/短信；
+# module（默认）= 追加选项 3，模块作为手机默认网关，手机使用模块 4G 流量上网。
+# 仅在命令行与已验证的原厂/历史 DJOneHub 版本完全一致时替换进程，未知配置一律不动。
+ensure_mobile_dhcp_internet_mode() {
     n=0
     while test "$n" -lt 50; do
         dnsmasq_pid=$(pidof dnsmasq 2>/dev/null || true)
@@ -355,10 +357,18 @@ ensure_mobile_dhcp_router() {
         *' '*) return 1 ;;
     esac
     command_line=$(tr '\000' ' ' < "/proc/$dnsmasq_pid/cmdline" 2>/dev/null || true)
-    expected='dnsmasq -i bridge0 -I lo -z --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 --dhcp-option-force=6,192.168.225.1 --dhcp-option-force=120,abcd.com '
+    # 原厂以裸名启动，钩子自身以 /usr/bin/dnsmasq 启动；统一去掉绝对路径前缀后比较。
+    command_line=${command_line#/usr/bin/dnsmasq }
+    wifi_expected='dnsmasq -i bridge0 -I lo -z --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 --dhcp-option-force=6,192.168.225.1 --dhcp-option-force=120,abcd.com '
+    module_expected='dnsmasq -i bridge0 -I lo -z --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 --dhcp-option-force=3,192.168.225.1 --dhcp-option-force=6,192.168.225.1 --dhcp-option-force=120,abcd.com '
+    internet_mode=$(cat /data/djonehub/dhcp-internet-mode 2>/dev/null || true)
+    case "$internet_mode" in
+        wifi) wanted="$wifi_expected" ;;
+        *) wanted="$module_expected" ;;
+    esac
     case "$command_line" in
-        *'--dhcp-option-force=3,192.168.225.1'*) return 0 ;;
-        "$expected") ;;
+        "$wifi_expected"|"$module_expected")
+            test "$command_line" = "$wanted" && return 0 ;;
         *) return 1 ;;
     esac
 
@@ -369,11 +379,18 @@ ensure_mobile_dhcp_router() {
         n=$((n+1))
     done
     kill -0 "$dnsmasq_pid" 2>/dev/null && return 1
-    /usr/bin/dnsmasq -i bridge0 -I lo -z \
-        --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 \
-        --dhcp-option-force=3,192.168.225.1 \
-        --dhcp-option-force=6,192.168.225.1 \
-        --dhcp-option-force=120,abcd.com
+    if test "$internet_mode" = wifi; then
+        /usr/bin/dnsmasq -i bridge0 -I lo -z \
+            --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 \
+            --dhcp-option-force=6,192.168.225.1 \
+            --dhcp-option-force=120,abcd.com
+    else
+        /usr/bin/dnsmasq -i bridge0 -I lo -z \
+            --dhcp-range=bridge0,192.168.225.20,192.168.225.30,255.255.255.0,43200 \
+            --dhcp-option-force=3,192.168.225.1 \
+            --dhcp-option-force=6,192.168.225.1 \
+            --dhcp-option-force=120,abcd.com
+    fi
 }
 
 activate_mobile_functions() {
@@ -410,7 +427,7 @@ start)
     test -f "$BRIDGE" || { log_startup missing-runtime; exit 66; }
     wait_usb_profile || { log_startup no-ecm-profile; exit 67; }
     # DHCP 必须早于控制 Agent：否则 iPhone 没有 192.168.225.x 地址，连模式切换请求都发不出来。
-    ensure_mobile_dhcp_router || log_startup mobile-dhcp-router-unchanged
+    ensure_mobile_dhcp_internet_mode || log_startup mobile-dhcp-internet-mode-unchanged
     # audio 保留时短暂等待主机打开厂商串口：Mac 会置 1，iPhone 保持 0。
     if ! is_mobile_profile && ! wait_mobile_profile; then
         log_startup "mac-pass-through functions=$(cat "$FUNCTIONS") serial_connected=$(cat "$SERIAL_CONNECTED" 2>/dev/null)"
@@ -421,7 +438,7 @@ start)
     log_startup "factory-service-ready pid=$before functions=$(cat "$FUNCTIONS")"
     activate_mobile_functions || { log_startup activate-mobile-functions-failed; exit 69; }
     test "$(pidof ql_manager_server)" = "$before" || { log_startup factory-service-changed; exit 70; }
-    ensure_mobile_dhcp_router || log_startup mobile-dhcp-router-unchanged
+    ensure_mobile_dhcp_internet_mode || log_startup mobile-dhcp-internet-mode-unchanged
     load_data11_bridge || { log_startup load-data11-failed; exit 71; }
     mkdir -p /data/djonehub/log
     setsid /bin/sh /etc/init.d/djonehub_agent supervise </dev/null >>"$LOGFILE" 2>&1 &

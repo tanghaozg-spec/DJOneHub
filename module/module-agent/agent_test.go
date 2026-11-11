@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -90,23 +91,127 @@ func TestModuleUpdateRestartScriptLetsNewAgentStartBeforeRollback(t *testing.T) 
 	}
 }
 
-func TestPersistentMobileDHCPRouterFixIsIncludedInStartupHook(t *testing.T) {
-	// iPhone USB 以太网需要明确的 Router 选项，启动器必须保留原厂 DNS/SIP 参数。
+func TestPersistentMobileDHCPInternetModeHookIsIncludedInStartupHook(t *testing.T) {
+	// 启动钩子必须按 /data/djonehub/dhcp-internet-mode 应用上网方式：
+	// wifi = 原厂参数（不下发 Router 选项 3，手机上网走 Wi-Fi）；
+	// module（默认）= 追加选项 3，模块作为手机默认网关；未知配置仍拒绝替换。
 	data, err := os.ReadFile("deploy-qdc507-agent.py")
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := string(data)
 	for _, required := range []string{
-		"ensure_mobile_dhcp_router()",
+		"ensure_mobile_dhcp_internet_mode()",
+		"/data/djonehub/dhcp-internet-mode",
+		"--dhcp-option-force=6,192.168.225.1",
+		"--dhcp-option-force=120,abcd.com",
+		"ensure_mobile_dhcp_internet_mode || log_startup mobile-dhcp-internet-mode-unchanged",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("启动器缺少 DHCP 上网方式钩子：%q", required)
+		}
+	}
+	wifiOffset := strings.Index(script, `if test "$internet_mode" = wifi`)
+	if wifiOffset < 0 {
+		t.Fatal("启动器缺少 wifi 上网模式分支")
+	}
+	elseOffset := wifiOffset + strings.Index(script[wifiOffset:], "\n    else")
+	if elseOffset <= wifiOffset {
+		t.Fatal("wifi 分支缺少 else 边界")
+	}
+	wifiSection := script[wifiOffset:elseOffset]
+	if strings.Contains(wifiSection, "--dhcp-option-force=3,") {
+		t.Fatal("wifi 模式不得下发 DHCP Router（选项 3），否则会抢占 Wi-Fi 默认路由")
+	}
+	if !strings.Contains(wifiSection, "--dhcp-option-force=6,192.168.225.1") {
+		t.Fatal("wifi 分支必须保留原厂 DNS 参数")
+	}
+	if strings.Contains(script, "ensure_mobile_dhcp_router(") {
+		t.Fatal("旧版 DHCP 网关钩子应被上网方式钩子取代")
+	}
+}
+
+func TestDHCPInternetModeCommandLines(t *testing.T) {
+	wifi := dnsmasqCommandLineForMode(internetModeWiFi)
+	module := dnsmasqCommandLineForMode(internetModeModule)
+	if strings.Contains(wifi, "--dhcp-option-force=3,") {
+		t.Fatal("wifi 模式不得包含默认网关选项")
+	}
+	for _, option := range []string{
 		"--dhcp-option-force=3,192.168.225.1",
 		"--dhcp-option-force=6,192.168.225.1",
 		"--dhcp-option-force=120,abcd.com",
-		"ensure_mobile_dhcp_router || log_startup mobile-dhcp-router-unchanged",
 	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("启动器缺少 iPhone DHCP 网关修复：%q", required)
+		if !strings.Contains(module, option) {
+			t.Fatalf("module 模式缺少 %s", option)
 		}
+	}
+	sample := strings.TrimSuffix(module, " ")
+	if normalizeProcCmdline([]byte(sample+"\x00")) != module {
+		t.Fatal("命令行归一化应把 NUL 参数分隔转为空格并保留末尾空格")
+	}
+	mode, err := validateKnownDHCPCommandLine(wifi)
+	if err != nil || mode != internetModeWiFi {
+		t.Fatalf("原厂命令行应识别为 wifi 模式: %v %s", err, mode)
+	}
+	mode, err = validateKnownDHCPCommandLine(module)
+	if err != nil || mode != internetModeModule {
+		t.Fatalf("module 命令行应识别为 module 模式: %v %s", err, mode)
+	}
+	// 启动钩子以 /usr/bin/dnsmasq 重启，原厂以裸名启动；两种前缀都必须识别。
+	bareModule := strings.TrimPrefix(module, dnsmasqBinaryPath+" ")
+	if mode, err = validateKnownDHCPCommandLine(bareModule); err != nil || mode != internetModeModule {
+		t.Fatalf("裸名 module 命令行应被识别: %v %s", err, mode)
+	}
+	if _, err := validateKnownDHCPCommandLine("dnsmasq -i eth0 "); err == nil {
+		t.Fatal("未知 dnsmasq 命令行必须拒绝替换")
+	}
+}
+
+func TestInternetModeHandlerPersistsAndReports(t *testing.T) {
+	tempFile := filepath.Join(t.TempDir(), "dhcp-internet-mode")
+	originalFile := internetModeFile
+	internetModeFile = tempFile
+	t.Cleanup(func() { internetModeFile = originalFile })
+
+	a := &agent{started: time.Now(), smsAuto: true}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/network/internet-mode", strings.NewReader(`{"mode":"wifi"}`))
+	a.routes(testLogger()).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("切换 wifi 模式失败: %d %s", response.Code, response.Body.String())
+	}
+	saved, readErr := os.ReadFile(tempFile)
+	if readErr != nil || strings.TrimSpace(string(saved)) != internetModeWiFi {
+		t.Fatalf("上网方式未持久化: %v %q", readErr, saved)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/api/network/internet-mode", nil)
+	a.routes(testLogger()).ServeHTTP(response, request)
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["mode"] != internetModeWiFi {
+		t.Fatalf("GET 应返回 wifi 模式: %v", payload)
+	}
+
+	// 通话进行中必须拒绝切换，避免 PCM 桥与 ecm0 抖动争用。
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/network/internet-mode", strings.NewReader(`{"mode":"module"}`))
+	a.calls.Active = &callRecord{}
+	a.routes(testLogger()).ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("通话中切换应返回 409: %d", response.Code)
+	}
+	a.calls.Active = nil
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/network/internet-mode", strings.NewReader(`{"mode":"invalid"}`))
+	a.routes(testLogger()).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("非法模式应返回 400: %d", response.Code)
 	}
 }
 

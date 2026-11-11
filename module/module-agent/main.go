@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	// 0.3.21：新增本地来电事件桥，让 iPhone 在模块状态变化时立即唤起 CallKit。
-	agentVersion = "0.3.21"
+	// 0.3.22：新增上网方式切换（DHCP 默认网关），支持模块上网与 Wi-Fi 上网互切。
+	agentVersion = "0.3.22"
 	// 监听所有本机接口以容忍 ECM 地址晚于 init 服务出现；请求层仍只放行 USB 私网与环回。
 	listenAddress = "0.0.0.0:7575"
 	// DATA11 桥与原厂 DATA1 完全分离，禁止重新使用 ql_manager_server 占用的 /dev/smd7。
@@ -51,6 +51,7 @@ type agent struct {
 	lastApplied4GOff      bool
 	voice                 voiceTracker
 	esimMu                sync.Mutex
+	internetMode          string
 	rxStart               uint64
 	txStart               uint64
 }
@@ -81,10 +82,13 @@ func main() {
 	}
 
 	service.rxStart, service.txStart, _ = readInterfaceCounters("ecm0")
+	service.internetMode = loadInternetMode(internetModeFile)
 	// 原厂服务刚释放 SMD 端口时，首轮 AT 查询可能需要几十秒。
 	// 先启动 HTTP 服务，再由轮询协程刷新状态，避免 iPad 把慢启动误判成代理离线。
 	if !controlOnly {
 		go service.pollLoop()
+		// 旧启动钩子不认识上网方式持久化文件；Agent 启动后自行纠正 dnsmasq。
+		go service.applyStartupDHCPMode(logger)
 	}
 
 	server := &http.Server{
@@ -202,6 +206,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
 	mux.HandleFunc("/api/network/cellular-policy", a.cellularPolicy)
 	mux.HandleFunc("/api/network/check-4g", a.check4G)
 	mux.HandleFunc("/api/network/check-proxy", a.checkProxy)
+	mux.HandleFunc("/api/network/internet-mode", a.internetModeHandler)
 	mux.HandleFunc("/api/network/reboot-module", a.rebootModule)
 	mux.HandleFunc("/api/network", a.networkDiagnostic)
 	mux.HandleFunc("/api/system/power", a.systemPower)

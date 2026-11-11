@@ -183,6 +183,16 @@ struct CellularPolicyStatus: Codable, Sendable {
     enum CodingKeys: String, CodingKey { case forceOff = "force_off"; case services }
 }
 
+/// 上网方式状态；GET 与 POST 共用。applied=false 表示本次未能立即生效（需重新插拔 USB）。
+struct InternetModeStatus: Codable, Sendable {
+    let supported: Bool?
+    let mode: String
+    let options: [String]?
+    let previous: String?
+    let applied: Bool?
+    let message: String?
+}
+
 struct USBProfileStatus: Codable, Sendable {
     let mode: String
     let uacEnabled: Bool
