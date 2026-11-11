@@ -5,15 +5,20 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import os
 import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
-# 使用 DJOneHub 已安装的 libusb，避免为了探测额外安装系统依赖。
+# 默认使用 DJOneHub 已安装的 libusb；Windows/Linux 等环境可用
+# DJONEHUB_LIBUSB 指定本地 libusb-1.0.dll / .so / .dylib 路径。
 LIBUSB_PATH = Path(
-    "/Users/jieden/Library/Application Support/DJOneHub/runtime/lib/libusb-1.0.0.dylib"
+    os.environ.get(
+        "DJONEHUB_LIBUSB",
+        "/Users/jieden/Library/Application Support/DJOneHub/runtime/lib/libusb-1.0.0.dylib",
+    )
 )
 USB_VENDOR_ID = 0x2C7C
 USB_PRODUCT_ID = 0x0125

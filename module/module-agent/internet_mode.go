@@ -60,12 +60,13 @@ func canonicalDHCPCommandLine(commandLine string) string {
 
 // validateKnownDHCPCommandLine 只允许替换已验证的两种 dnsmasq 配置，
 // 未知固件或用户自定义 DHCP 服务一律拒绝，避免破坏模块网络。
+// canonical 已去掉二进制前缀，因此与“仅参数序列”比较。
 func validateKnownDHCPCommandLine(commandLine string) (mode string, err error) {
 	canonical := canonicalDHCPCommandLine(commandLine)
 	switch canonical {
-	case strings.TrimSpace(dnsmasqCommandLineForMode(internetModeWiFi)):
+	case strings.Join(dhcpArgsForMode(internetModeWiFi), " "):
 		return internetModeWiFi, nil
-	case strings.TrimSpace(dnsmasqCommandLineForMode(internetModeModule)):
+	case strings.Join(dhcpArgsForMode(internetModeModule), " "):
 		return internetModeModule, nil
 	default:
 		return "", fmt.Errorf("dnsmasq 命令行不是已验证的 QDC507 配置，拒绝替换")
