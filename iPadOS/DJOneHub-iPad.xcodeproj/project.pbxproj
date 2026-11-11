@@ -408,12 +408,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = VKFYN88RC6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "DJOneHub-iPad/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
-				MARKETING_VERSION = 0.7.6;
+				MARKETING_VERSION = 0.7.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jieden.djonehub.ipad;
 				PRODUCT_NAME = DJOneHub;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -429,12 +429,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = VKFYN88RC6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "DJOneHub-iPad/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
-				MARKETING_VERSION = 0.7.6;
+				MARKETING_VERSION = 0.7.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jieden.djonehub.ipad;
 				PRODUCT_NAME = DJOneHub;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -450,7 +450,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = VKFYN88RC6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DJOneHubLiveActivityExtension/Info.plist;
@@ -460,7 +460,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.7.6;
+				MARKETING_VERSION = 0.7.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jieden.djonehub.ipad.liveactivity;
 				PRODUCT_NAME = DJOneHubLiveActivityExtension;
 				SKIP_INSTALL = YES;
@@ -476,7 +476,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = VKFYN88RC6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DJOneHubLiveActivityExtension/Info.plist;
@@ -486,7 +486,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.7.6;
+				MARKETING_VERSION = 0.7.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jieden.djonehub.ipad.liveactivity;
 				PRODUCT_NAME = DJOneHubLiveActivityExtension;
 				SKIP_INSTALL = YES;
