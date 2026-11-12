@@ -24,6 +24,13 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep -E "iphoneos|iOS" || true
 
+      - name: Prepare module-update.djupdate placeholder
+        run: |
+          # 仓库不含 Ed25519 私钥，无法生成可验证的签名更新包（*.djupdate 被 .gitignore 排除）。
+          # 占位包仅满足构建期资源检查；模块端已预装 Agent，App 内更新会因签名校验失败被安全跳过。
+          mkdir -p iPadOS/DJOneHub-iPad/Resources
+          tar -czf iPadOS/DJOneHub-iPad/Resources/module-update.djupdate -T /dev/null
+
       - name: Build app (unsigned, generic iOS device)
         run: |
           set -o pipefail
