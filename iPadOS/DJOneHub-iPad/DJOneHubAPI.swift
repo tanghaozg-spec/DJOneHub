@@ -142,6 +142,10 @@ struct DJOneHubAPI: Sendable {
     func setInternetMode(_ mode: String) async throws -> InternetModeStatus {
         try await postDecoded("api/network/internet-mode", ["mode": mode], timeout: 10)
     }
+    /// 让模块抖动 ecm0、清空邻居缓存，促使 iPhone 重新获取 USB 网卡地址。
+    func refreshNetworkLink() async throws {
+        try await post("api/network/link-refresh", EmptyBody())
+    }
     func check4GRoute() async throws -> NetworkCheckResult { try await postDecoded("api/network/check-4g", EmptyBody()) }
     func checkProxyRoute() async throws -> NetworkCheckResult { try await postDecoded("api/network/check-proxy", EmptyBody()) }
     func rebootModule() async throws { try await post("api/network/reboot-module", EmptyBody()) }

@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	// 0.3.22：新增上网方式切换（DHCP 默认网关），支持模块上网与 Wi-Fi 上网互切。
-	agentVersion = "0.3.22"
+	// 0.3.23：上网方式切换后链路重新协商延长到 3 秒，并新增 /api/network/link-refresh，
+	// 让手机不必开飞行模式就能重新获取 USB 网卡地址。
+	agentVersion = "0.3.23"
 	// 监听所有本机接口以容忍 ECM 地址晚于 init 服务出现；请求层仍只放行 USB 私网与环回。
 	listenAddress = "0.0.0.0:7575"
 	// DATA11 桥与原厂 DATA1 完全分离，禁止重新使用 ql_manager_server 占用的 /dev/smd7。
@@ -207,6 +208,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
 	mux.HandleFunc("/api/network/check-4g", a.check4G)
 	mux.HandleFunc("/api/network/check-proxy", a.checkProxy)
 	mux.HandleFunc("/api/network/internet-mode", a.internetModeHandler)
+	mux.HandleFunc("/api/network/link-refresh", a.linkRefreshHandler)
 	mux.HandleFunc("/api/network/reboot-module", a.rebootModule)
 	mux.HandleFunc("/api/network", a.networkDiagnostic)
 	mux.HandleFunc("/api/system/power", a.systemPower)

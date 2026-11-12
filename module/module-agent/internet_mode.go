@@ -125,9 +125,12 @@ func restartDHCPForMode(mode string) (bool, error) {
 }
 
 // bounceECM 让 ecm0 短暂 down/up，触发手机立即重新发起 DHCP，从而拿到新的网关选项。
+// 1 秒对 iOS 太短：系统可能完全感知不到链路断开，仍沿用旧租约，导致必须开飞行模式
+// 才能重新拿地址。这里保持 3 秒，足以让 iOS 摘除并重建这块以太网服务。
 // 响应已先返回给 App，这里失败仅记录日志；重新插拔 USB 总能让新模式生效。
 func bounceECM() {
-	script := "ifconfig ecm0 down >/dev/null 2>&1; sleep 1; ifconfig ecm0 up >/dev/null 2>&1"
+	script := "ifconfig ecm0 down >/dev/null 2>&1; sleep 3; ifconfig ecm0 up >/dev/null 2>&1; " +
+		"ip neigh flush dev bridge0 >/dev/null 2>&1; ip neigh flush dev ecm0 >/dev/null 2>&1"
 	command := exec.Command("/bin/sh", "-c", script)
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := command.Start(); err != nil {
@@ -265,4 +268,28 @@ func (a *agent) internetModeHandler(response http.ResponseWriter, request *http.
 	default:
 		requireMethod(response, request, http.MethodGet, http.MethodPost)
 	}
+}
+
+// linkRefreshHandler 让手机在拿不到地址或切换上网方式后卡住时，主动触发一次链路重新协商。
+// 与切换模式的差别：不改 dnsmasq 配置，只抖动 ecm0 并清空邻居缓存。
+func (a *agent) linkRefreshHandler(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		requireMethod(response, request, http.MethodPost)
+		return
+	}
+	a.mu.RLock()
+	callActive := a.calls.Active != nil
+	a.mu.RUnlock()
+	if callActive {
+		writeError(response, http.StatusConflict, "通话进行中不能重新协商网络，请先挂断")
+		return
+	}
+	// 先把响应写回，再抖动链路；否则 App 会在 3 秒断开期间收不到结果。
+	writeJSON(response, http.StatusOK, map[string]any{
+		"ok": true, "message": "已触发 USB 网络重新协商，约 4 秒后恢复",
+	})
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		bounceECM()
+	}()
 }

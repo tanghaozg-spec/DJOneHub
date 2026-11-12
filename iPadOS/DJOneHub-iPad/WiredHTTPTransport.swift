@@ -178,14 +178,17 @@ enum ModuleUSBInterfaceResolver {
     private static let cacheLifetimeNanoseconds: UInt64 = 1_000_000_000
 
     static func moduleInterfaceNames(from addresses: [NetworkInterfaceAddress]) -> Set<String> {
-        Set(addresses.compactMap { item in
-            let octets = item.address.split(separator: ".", omittingEmptySubsequences: false)
-            guard octets.count == 4,
-                  octets[0] == "192", octets[1] == "168", octets[2] == "225",
-                  let host = Int(octets[3]), (2...254).contains(host),
-                  String(host) == octets[3] else { return nil }
-            return item.name
-        })
+        Set(addresses.filter { isModuleAddress($0.address) }.map(\.name))
+    }
+
+    /// 模块 USB 私网地址固定为 192.168.225.2~254；用于识别 USB 网卡是否真的拿到了租约。
+    static func isModuleAddress(_ address: String) -> Bool {
+        let octets = address.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              octets[0] == "192", octets[1] == "168", octets[2] == "225",
+              let host = Int(octets[3]), (2...254).contains(host),
+              String(host) == octets[3] else { return false }
+        return true
     }
 
     static func resolve(timeout: TimeInterval = 0.35) -> NWInterface? {
@@ -260,6 +263,28 @@ enum ModuleUSBInterfaceResolver {
             )
         }
         return result
+    }
+}
+
+/// 本机 USB 网卡的地址状态。没有拿到 192.168.225.x 时，问题在 iPhone 的 DHCP，
+/// 不在模块或 App；界面据此给出“手动配置以太网 IP”的可执行指引。
+enum USBLinkAddressState: Equatable {
+    case module(interface: String, address: String)
+    case selfAssigned(interface: String, address: String)
+    case missing
+}
+
+extension ModuleUSBInterfaceResolver {
+    static func localLinkState() -> USBLinkAddressState {
+        let addresses = systemInterfaceAddresses()
+        if let item = addresses.first(where: { isModuleAddress($0.address) }) {
+            return .module(interface: item.name, address: item.address)
+        }
+        // iOS 拿不到 DHCP 时会退回 169.254 自分配地址；以太网接口名通常是 en*。
+        if let item = addresses.first(where: { $0.address.hasPrefix("169.254.") && $0.name.hasPrefix("en") }) {
+            return .selfAssigned(interface: item.name, address: item.address)
+        }
+        return .missing
     }
 }
 

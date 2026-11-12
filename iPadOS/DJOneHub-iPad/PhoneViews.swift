@@ -77,6 +77,10 @@ struct DialPadView: View {
                         // 弹窗需盖在号码输入区之上，不能被后续的拨号盘视图遮住。
                         .zIndex(showingModuleStatus ? 1 : 0)
 
+                    if let notice = model.routeNotice {
+                        routeNoticeBanner(notice)
+                    }
+
                     VStack(spacing: 2) {
                         Text(model.numberInput.isEmpty ? L10n.t("输入号码") : model.numberInput)
                             .font(.system(size: isCompact ? 36 : 42, weight: .light, design: .rounded))
@@ -216,9 +220,69 @@ struct DialPadView: View {
 
             Spacer(minLength: 12)
 
+            // 流量出口放在首屏：需要临时用模块流量时点一下即可，不必进设置或开飞行模式。
+            if model.internetMode != nil {
+                dataRoutePill
+            }
+
             dialStatusPill
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 一键切换手机上网出口：Wi-Fi ⇄ 模块 4G。通话与短信始终走 USB 私网。
+    private var dataRoutePill: some View {
+        let usesModule = model.internetMode == "module"
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { await model.toggleInternetMode() }
+        } label: {
+            HStack(spacing: 5) {
+                if model.internetModeBusy {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: usesModule ? "antenna.radiowaves.left.and.right" : "wifi")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Text(usesModule ? "4G" : "Wi-Fi")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(usesModule ? Color.blue : Color.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .background(
+                (usesModule ? Color.blue : Color.secondary).opacity(0.12),
+                in: Capsule()
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(model.internetModeBusy || model.activeCall != nil)
+        .opacity(model.internetModeBusy || model.activeCall != nil ? 0.5 : 1)
+        .accessibilityLabel(usesModule ? "当前用模块 4G 上网，轻点切换到 Wi-Fi" : "当前用 Wi-Fi 上网，轻点切换到模块 4G")
+        .accessibilityHint("通话中不能切换")
+    }
+
+    /// 切换结果与修复指引；点一下可立即收起。
+    private func routeNoticeBanner(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Text(notice)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { model.routeNotice = nil }
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private var dialStatusPill: some View {
@@ -376,7 +440,16 @@ private struct ModuleStatusPopover: View {
 
     private var connectionDescription: String {
         guard !model.isOnline else { return "USB ECM 已连接，状态会自动刷新" }
-        return model.connectionMessage ?? "请检查模块连接与 USB ECM 网络"
+        if let message = model.connectionMessage { return message }
+        // 区分“模块没响应”和“iPhone 根本没拿到地址”，后者只能靠以太网手动配置解决。
+        switch ModuleUSBInterfaceResolver.localLinkState() {
+        case let .module(name, address):
+            return "USB 网卡 \(name) 已获取 \(address)，但模块代理未响应。稍等或重新插拔一次模块。"
+        case let .selfAssigned(name, address):
+            return "USB 网卡 \(name) 只拿到 \(address)：iPhone 没有从模块取到地址。到 设置 → 以太网 → 配置 IP 选“手动”：IP 192.168.225.2，掩码 255.255.255.0，路由器留空。设置一次后即可不开飞行模式。"
+        case .missing:
+            return "没有检测到 USB 网卡：请重新插拔模块，或换一根支持数据传输的 C 口线。"
+        }
     }
 
 

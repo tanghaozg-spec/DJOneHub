@@ -355,7 +355,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .disabled(isUpdatingInternetMode || !model.isOnline)
-                Text("模块 4G 上网：手机使用模块的 4G 流量上网。\nWi-Fi 上网：手机上网继续走 Wi-Fi，模块只负责通话、短信与控制。\n切换时模块网络会短暂中断；通话与短信不受影响。若切换后手机仍走旧出口，重新插拔一次 USB 即可生效。")
+                Text("模块 4G 上网：手机使用模块的 4G 流量上网。\nWi-Fi 上网：手机上网继续走 Wi-Fi，模块只负责通话、短信与控制。\n切换时模块网络会中断约 4 秒，App 会自动重连，通话与短信不受影响。若 20 秒后仍未连上，按拨号页提示到“设置 → 以太网”把 IP 手动设为 192.168.225.2（掩码 255.255.255.0，路由器留空），设好后就不必再开飞行模式。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

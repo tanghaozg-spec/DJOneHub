@@ -62,6 +62,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var modemStatus: ModemStatus?
     @Published private(set) var agentVersion: String?
     @Published private(set) var systemPower: SystemPowerStatus?
+    /// nil 表示模块版本还不支持上网方式切换（低于 0.3.22）。
+    @Published private(set) var internetMode: String?
+    @Published private(set) var internetModeBusy = false
+    /// 切换结果与修复指引；显示在拨号页顶部，数秒后自动消失。
+    @Published var routeNotice: String?
+    private var nextInternetModeRefresh = Date.distantPast
 
     let api: DJOneHubAPI
     let contacts = ContactStore()
@@ -149,6 +155,8 @@ final class AppModel: ObservableObject {
         api.resetLocalConnectionState()
         restartCallEventBridge()
         restartPolling()
+        // 回到前台补读上网方式，保证顶部按钮与模块实际状态一致。
+        Task { [weak self] in await self?.refreshInternetModeIfNeeded(force: true) }
     }
 
     func didEnterBackground() {
@@ -172,6 +180,93 @@ final class AppModel: ObservableObject {
     func setLiveActivityEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: liveActivityKey)
         liveActivity.setEnabled(enabled)
+    }
+
+    // MARK: - 上网方式：模块 4G / Wi-Fi 优先
+
+    var internetModeLabel: String { internetMode == "module" ? "4G" : "Wi-Fi" }
+
+    /// 读取当前上网方式；30 秒内不重复请求，避免跟随每秒轮询打满模块。
+    func refreshInternetModeIfNeeded(force: Bool = false) async {
+        guard !internetModeBusy else { return }
+        let now = Date()
+        if !force, now < nextInternetModeRefresh { return }
+        nextInternetModeRefresh = now.addingTimeInterval(30)
+        guard let status = try? await api.internetMode(), status.supported != false else { return }
+        internetMode = status.mode
+    }
+
+    /// 一键切换手机上网出口；通话与短信始终走 USB 私网，不受影响。
+    func toggleInternetMode() async {
+        guard !internetModeBusy else { return }
+        guard activeCall == nil else {
+            showRouteNotice("通话中不能切换上网方式，请先挂断")
+            return
+        }
+        let current = internetMode ?? "module"
+        let target = current == "module" ? "wifi" : "module"
+        internetModeBusy = true
+        internetMode = target
+        defer { internetModeBusy = false }
+        do {
+            let status = try await api.setInternetMode(target)
+            internetMode = status.mode
+            showRouteNotice(target == "module"
+                ? "已切换到模块 4G：手机改用模块流量上网"
+                : "已切换到 Wi-Fi：模块只负责通话与短信")
+            await awaitRouteRecovery()
+        } catch {
+            internetMode = current
+            showRouteNotice("切换失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 模块会抖动 ecm0 让 iPhone 重新租约；这里重建长连接并最多等 20 秒。
+    /// 超时后按 USB 网卡的真实地址给出指引，避免用户只能靠开飞行模式自救。
+    private func awaitRouteRecovery() async {
+        isOnline = false
+        consecutivePollFailures = 0
+        api.resetLocalConnectionState()
+        restartCallEventBridge()
+        restartPolling()
+        for elapsed in 1...20 {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            // 前 4 秒一定处于链路抖动期，此时的成功响应是旧连接残留，不能当作已恢复。
+            if elapsed >= 4, isOnline { return }
+        }
+        switch ModuleUSBInterfaceResolver.localLinkState() {
+        case .module:
+            showRouteNotice("已切换，但模块代理还没响应。稍等几秒，或重新插拔一次 USB。")
+        case .selfAssigned:
+            showRouteNotice("iPhone 没拿到模块地址。到 设置 → 以太网 → 配置 IP 选手动：IP 192.168.225.2，掩码 255.255.255.0，路由器留空。设好后就不用再开飞行模式。")
+        case .missing:
+            showRouteNotice("没检测到 USB 网卡，请重新插拔模块或换一根支持数据的线。")
+        }
+    }
+
+    /// 让手机主动触发一次链路重新协商（不改变上网方式），用于离线时的自救。
+    func refreshUSBNetworkLink() async {
+        guard activeCall == nil else {
+            showRouteNotice("通话中不能重新协商网络，请先挂断")
+            return
+        }
+        do {
+            try await api.refreshNetworkLink()
+            showRouteNotice("已请求模块重新协商 USB 网络，约 5 秒后恢复")
+            await awaitRouteRecovery()
+        } catch {
+            showRouteNotice("重新协商失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func showRouteNotice(_ text: String) {
+        routeNotice = text
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(9))
+            guard let self, self.routeNotice == text else { return }
+            self.routeNotice = nil
+        }
     }
 
     private func restartPolling() {
@@ -302,6 +397,8 @@ final class AppModel: ObservableObject {
                 isOnline = true
                 // 只在离线到在线的边沿运行一次公网探测，避免跟随每秒轮询增加流量与耗电。
                 Task { await NetworkDiagnosticRecorder.shared.recordModuleOnline() }
+                // 模块可能刚被重新插拔或升级，上线后补读一次上网方式。
+                Task { [weak self] in await self?.refreshInternetModeIfNeeded(force: true) }
             }
             if connectionMessage != nil { connectionMessage = nil }
             scheduleModuleMetadataRefresh(generation: generation)
