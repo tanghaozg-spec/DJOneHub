@@ -13,7 +13,7 @@ on:
 jobs:
   build:
     name: Build unsigned IPA
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 40
     steps:
       - name: Checkout
