@@ -78,15 +78,28 @@ final class WiredHTTPTransport: @unchecked Sendable {
             guard Self.allowsInterfaceFallback(httpMethod: request.httpMethod),
                   (error as? WiredHTTPError)?.isInterfaceFailure == true else { throw error }
             let fallback: NWInterface.InterfaceType = preferred == .wiredEthernet ? .other : .wiredEthernet
-            let response = try await sendOnce(
-                request,
-                host: NWEndpoint.Host(host),
-                port: port,
-                body: body,
-                route: .type(fallback)
-            )
-            setPreferredInterface(fallback)
-            return response
+            do {
+                let response = try await sendOnce(
+                    request,
+                    host: NWEndpoint.Host(host),
+                    port: port,
+                    body: body,
+                    route: .type(fallback)
+                )
+                setPreferredInterface(fallback)
+                return response
+            } catch {
+                guard (error as? WiredHTTPError)?.isInterfaceFailure == true else { throw error }
+                // 最后兜底：不绑定任何接口，交给系统按 192.168.225.0/24 的路由表选择。
+                // iOS 在蜂窝或 Wi-Fi 为主接口时，可能拒绝把连接显式绑定到 USB 以太网。
+                return try await sendOnce(
+                    request,
+                    host: NWEndpoint.Host(host),
+                    port: port,
+                    body: body,
+                    route: .system
+                )
+            }
         }
     }
 
@@ -291,11 +304,14 @@ extension ModuleUSBInterfaceResolver {
 private enum WiredInterfaceRoute {
     case exact(NWInterface)
     case type(NWInterface.InterfaceType)
+    /// 不约束接口，由系统路由表决定；仅作为幂等请求的最后兜底。
+    case system
 
     var description: String {
         switch self {
         case let .exact(interface): return "\(interface.name):\(interface.type)"
         case let .type(type): return String(describing: type)
+        case .system: return "system"
         }
     }
 
@@ -306,6 +322,8 @@ private enum WiredInterfaceRoute {
             return path.availableInterfaces.contains { $0.name == interface.name }
         case let .type(type):
             return path.usesInterfaceType(type)
+        case .system:
+            return true
         }
     }
 }
@@ -369,6 +387,7 @@ private final class WiredHTTPRequestOperation: @unchecked Sendable {
         switch route {
         case let .exact(interface): parameters.requiredInterface = interface
         case let .type(type): parameters.requiredInterfaceType = type
+        case .system: break
         }
         connection = NWConnection(host: host, port: port, using: parameters)
     }
